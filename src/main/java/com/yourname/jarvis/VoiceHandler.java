@@ -1,12 +1,8 @@
 package com.yourname.jarvis;
 
-import de.maxhenkel.voicechat.api.VoicechatApi;
-import de.maxhenkel.voicechat.api.audiochannel.ClientAudioChannel;
-import de.maxhenkel.voicechat.api.audiochannel.LocationalAudioChannel;
-import de.maxhenkel.voicechat.api.events.EventRegistration;
-import de.maxhenkel.voicechat.api.events.MicrophonePacketEvent;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
+import org.json.JSONObject;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -27,8 +23,6 @@ public class VoiceHandler {
     private final HttpClient httpClient;
     private final Map<String, byte[]> audioCache = new HashMap<>();
     private final Path cacheDirectory;
-    private VoicechatApi voicechatApi;
-    private final Map<String, ClientAudioChannel> audioChannels = new HashMap<>();
 
     public VoiceHandler(Jarvis plugin) {
         this.plugin = plugin;
@@ -44,42 +38,7 @@ public class VoiceHandler {
     }
 
     public void initialize() {
-        plugin.getLogger().info("Initializing voice handler for Simple Voice Chat");
-        try {
-            voicechatApi = VoicechatApi.getInstance();
-            if (voicechatApi != null) {
-                registerEvents();
-                plugin.getLogger().info("Simple Voice Chat API initialized");
-            } else {
-                plugin.getLogger().warning("Simple Voice Chat API not found");
-            }
-        } catch (Exception e) {
-            plugin.getLogger().warning("Failed to initialize Simple Voice Chat API: " + e.getMessage());
-        }
-    }
-
-    private void registerEvents() {
-        voicechatApi.registerEvents(new EventRegistration() {
-            @Override
-            public void registerEvent(Class<?> eventType, Object listener, int priority) {
-                if (eventType == MicrophonePacketEvent.class) {
-                    voicechatApi.registerEvent(MicrophonePacketEvent.class, (MicrophonePacketEvent event) -> {
-                        String playerName = event.getSenderConnection().getPlayer().getName();
-                        Player player = plugin.getServer().getPlayer(playerName);
-                        if (player == null) return;
-
-                        byte[] audioData = event.getPacket().getOpusEncodedData();
-                        try {
-                            String transcribedText = transcribeAudio(audioData);
-                            plugin.getLogger().info("Transcribed voice from " + playerName + ": " + transcribedText);
-                            processVoiceCommand(player, transcribedText);
-                        } catch (Exception e) {
-                            plugin.getLogger().log(Level.WARNING, "Failed to process voice input: " + e.getMessage());
-                        }
-                    }, priority);
-                }
-            }
-        });
+        plugin.getLogger().warning("Voice chat functionality is disabled due to Simple Voice Chat API issues. Using text-based responses only.");
     }
 
     public void processVoiceCommand(Player player, String input) {
@@ -123,43 +82,9 @@ public class VoiceHandler {
             return;
         }
 
-        String normalizedText = text.trim().toLowerCase();
-        byte[] audioData = audioCache.get(normalizedText);
-
-        if (audioData == null) {
-            audioData = convertTextToSpeech(text);
-            if (audioData != null) {
-                audioCache.put(normalizedText, audioData);
-                try {
-                    Path cacheFile = cacheDirectory.resolve(Integer.toHexString(normalizedText.hashCode()) + ".mp3");
-                    Files.write(cacheFile, audioData);
-                    plugin.getLogger().info("Cached voice response for: " + text);
-                } catch (Exception e) {
-                    plugin.getLogger().log(Level.WARNING, "Error caching audio", e);
-                }
-            }
-        }
-
-        if (audioData != null && voicechatApi != null) {
-            try {
-                String playerId = player.getName();
-                ClientAudioChannel audioChannel = audioChannels.computeIfAbsent(playerId, id -> {
-                    LocationalAudioChannel channel = voicechatApi.createLocationalAudioChannel(
-                            UUID.randomUUID(),
-                            voicechatApi.fromServerLevel(player.getWorld()),
-                            voicechatApi.createPosition(player.getLocation().getX(), player.getLocation().getY(), player.getLocation().getZ())
-                    );
-                    channel.setDistance(16.0);
-                    return channel;
-                });
-                audioChannel.send(audioData);
-                plugin.getLogger().info("Sent voice response to " + player.getName() + ": " + text);
-            } catch (Exception e) {
-                plugin.getLogger().log(Level.WARNING, "Failed to send voice response: " + e.getMessage());
-            }
-        } else {
-            plugin.getLogger().warning("Failed to generate voice response for: " + text);
-        }
+        // Fallback to text-based response since voice chat is disabled
+        player.sendMessage("[Jarvis Voice] " + text);
+        plugin.getLogger().info("Sent text response to " + player.getName() + ": " + text);
     }
 
     private byte[] convertTextToSpeech(String text) {
@@ -232,8 +157,6 @@ public class VoiceHandler {
     }
 
     public void shutdown() {
-        audioChannels.values().forEach(ClientAudioChannel::close);
-        audioChannels.clear();
         audioCache.clear();
         plugin.getLogger().info("Voice handler shut down");
     }
