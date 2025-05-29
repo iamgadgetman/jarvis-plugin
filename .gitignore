@@ -1,0 +1,16 @@
+# Maven
+target/
+*.jar
+
+# IDE
+.idea/
+*.iml
+
+# Logs
+*.log
+
+# Voice cache
+voice-cache/
+
+# Sensitive config
+src/main/resources/config.yml

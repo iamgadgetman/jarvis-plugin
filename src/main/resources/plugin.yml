@@ -1,0 +1,29 @@
+name: Jarvis
+version: 1.2-SNAPSHOT
+main: com.yourname.jarvis.Jarvis
+api-version: 1.21
+depend: [Citizens]
+softdepend: [PlasmoVoice]
+commands:
+  jarvis:
+    description: Interact with Jarvis, your AI companion
+    usage: /<command> [help|spawn|dismiss|follow|stay|go|defend|mine|bell|give|inventory|ask]
+permissions:
+  jarvis.use:
+    description: Allows basic interaction with Jarvis
+    default: true
+  jarvis.ask:
+    description: Allows using Jarvis's AI chat
+    default: true
+  jarvis.defend:
+    description: Allows Jarvis to defend against mobs
+    default: true
+  jarvis.mine:
+    description: Allows Jarvis to mine blocks
+    default: true
+  jarvis.bell:
+    description: Allows using the Jarvis Bell
+    default: true
+  jarvis.give:
+    description: Allows receiving items from Jarvis
+    default: true

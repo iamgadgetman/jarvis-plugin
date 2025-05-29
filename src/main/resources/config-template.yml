@@ -1,0 +1,85 @@
+# Jarvis Configuration
+openai:
+  api-key: "your-openai-api-key-here"
+  model: "gpt-3.5-turbo"
+chat:
+  max-lines-per-page: 5
+  max-characters-per-line: 40
+voice:
+  enabled: true
+  banter-enabled: false
+  elevenlabs:
+    api-key: "your-openai-api-key-here"
+    voice-id: "pNInz6obpgDQGcFmaJgB" # Adam (male British)
+sound:
+  summon: "BLOCK_NOTE_BLOCK_BELL"
+tools:
+  defend:
+    melee:
+      item: "DIAMOND_SWORD"
+      enchantments:
+        - "SHARPNESS:3"
+    ranged:
+      item: "BOW"
+      enchantments:
+        - "INFINITY:1"
+  mine:
+    pickaxe:
+      item: "DIAMOND_PICKAXE"
+      enchantments:
+        - "EFFICIENCY:3"
+    shovel:
+      item: "DIAMOND_SHOVEL"
+      enchantments:
+        - "EFFICIENCY:3"
+mining:
+  radius: 16
+  preferred-ores:
+    - "DIAMOND_ORE:3"
+    - "DEEPSLATE_DIAMOND_ORE:3"
+    - "ANCIENT_DEBRIS:2"
+    - "LAPIS_ORE:1"
+    - "DEEPSLATE_LAPIS_ORE:1"
+    - "REDSTONE_ORE:1"
+    - "DEEPSLATE_REDSTONE_ORE:1"
+    - "EMERALD_ORE:2"
+    - "DEEPSLATE_EMERALD_ORE:2"
+    - "GOLD_ORE:1"
+    - "DEEPSLATE_GOLD_ORE:1"
+    - "IRON_ORE:1"
+    - "DEEPSLATE_IRON_ORE:1"
+    - "COPPER_ORE:1"
+    - "DEEPSLATE_COPPER_ORE:1"
+hostile-mobs:
+  - "ZOMBIE"
+  - "SKELETON"
+  - "CREEPER"
+  - "SPIDER"
+  - "WITCH"
+  - "GHAST"
+  - "PHANTOM"
+  - "BLAZE"
+  - "WITHER_SKELETON"
+  - "ENDERMAN"
+  - "PIGLIN"
+  - "ZOMBIFIED_PIGLIN"
+navigation:
+  pathfinding-range: 50.0
+  speed: 1.5
+banter:
+  defense:
+    - "Blasted zombies, sir! Shall I dispatch them with prejudice?"
+    - "These ruffians are no match for my impeccable swordsmanship!"
+    - "Ghasts? How dreadfully gauche. Allow me to perforate them!"
+    - "Phantoms in the skies? I’ll have them plummeting in no time, sir!"
+    - "Another mob to smite? My blade grows weary of this monotony!"
+  mining:
+    - "Another diamond? How tedious, sir!"
+    - "Must we dig like common miners? Very well, sir."
+    - "Netherite, you say? A gentleman’s ore, if ever there was one!"
+    - "Lapis? Hardly worth the dirt on my boots, but I’ll fetch it."
+    - "Redstone? I suppose we’re building a contraption for your amusement?"
+  general:
+    - "Poking me, sir? I’m a butler, not a pincushion!"
+    - "Do mind your manners, or I’ll serve you a stern lecture with your tea!"
+    - "Really, sir, must you prod? I’ve polishing to attend to!"
