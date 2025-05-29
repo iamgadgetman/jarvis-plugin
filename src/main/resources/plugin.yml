@@ -27,3 +27,6 @@ permissions:
   jarvis.give:
     description: Allows receiving items from Jarvis
     default: true
+  jarvis.lookup:
+    description: Allows looking up a player's UUID by username
+    default: true

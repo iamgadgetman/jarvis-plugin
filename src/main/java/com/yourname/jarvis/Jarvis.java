@@ -4,11 +4,15 @@ import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.api.npc.NPC;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.Sound;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
+import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
@@ -17,17 +21,17 @@ import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
-import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
-import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
-import org.bukkit.block.Block;
 import org.json.JSONObject;
+
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -53,32 +57,65 @@ public class Jarvis extends JavaPlugin implements Listener {
     private boolean voiceEnabled;
     private String summonSound;
     private VoiceHandler voiceHandler;
-    private final Map<UUID, NPC> playerJarvis = new HashMap<>();
-    private final Map<UUID, List<String>> chatPages = new HashMap<>();
-    private final Map<UUID, Integer> currentPage = new HashMap<>();
-    private final Map<UUID, Boolean> defending = new HashMap<>();
-    private final Map<UUID, Boolean> mining = new HashMap<>();
-    private final Map<UUID, List<ItemStack>> inventories = new HashMap<>();
+    private File playerDataFile;
+    private FileConfiguration playerDataConfig;
+    private final Map<String, UUID> usernameToUUID = new HashMap<>(); // Lowercase username to UUID
+    private final Map<String, String> lowercaseToExactUsername = new HashMap<>(); // Lowercase to exact username
+    private final Map<String, NPC> playerJarvis = new HashMap<>();
+    private final Map<String, List<String>> chatPages = new HashMap<>();
+    private final Map<String, Integer> currentPage = new HashMap<>();
+    private final Map<String, Boolean> defending = new HashMap<>();
+    private final Map<String, Boolean> mining = new HashMap<>();
+    private final Map<String, List<ItemStack>> inventories = new HashMap<>();
     private final Random random = new Random();
-    private final Map<UUID, Integer> taskIds = new HashMap<>();
+    private final Map<String, Integer> taskIds = new HashMap<>();
 
     @Override
     public void onEnable() {
         getLogger().info("Jarvis AI Companion starting up... Preparing a spot of tea and sarcasm!");
 
+        // Load username-to-UUID mappings from playerdata.yml
+        playerDataFile = new File(getDataFolder(), "playerdata.yml");
+        playerDataConfig = YamlConfiguration.loadConfiguration(playerDataFile);
+        if (playerDataConfig.contains("players")) {
+            for (String username : playerDataConfig.getConfigurationSection("players").getKeys(false)) {
+                String uuid = playerDataConfig.getString("players." + username + ".uuid");
+                if (uuid != null) {
+                    String lowercaseUsername = username.toLowerCase();
+                    usernameToUUID.put(lowercaseUsername, UUID.fromString(uuid));
+                    lowercaseToExactUsername.put(lowercaseUsername, username);
+                }
+            }
+        }
+
         saveDefaultConfig();
-        apiKey = getConfig().getString("openai.api-key");
+        apiKey = System.getenv("OPENAI_API_KEY") != null ? System.getenv("OPENAI_API_KEY") : getConfig().getString("openai.api-key");
+        elevenLabsApiKey = System.getenv("ELEVENLABS_API_KEY") != null ? System.getenv("ELEVENLABS_API_KEY") : getConfig().getString("voice.elevenlabs.api-key", "");
+        if (System.getenv("OPENAI_API_KEY") != null || System.getenv("ELEVENLABS_API_KEY") != null) {
+            getLogger().info("Using API keys from environment variables.");
+        }
         model = getConfig().getString("openai.model", "gpt-3.5-turbo");
-        maxLinesPerPage = getConfig().getInt("chat.max-lines-per-page", 5);
-        maxCharactersPerLine = getConfig().getInt("chat.max-characters-per-line", 40);
-        voiceEnabled = getConfig().getBoolean("voice.enabled", false);
-        elevenLabsApiKey = getConfig().getString("voice.elevenlabs.api-key", "");
         elevenLabsVoiceId = getConfig().getString("voice.elevenlabs.voice-id", "pNInz6obpgDQGcFmaJgB");
+        voiceEnabled = getConfig().getBoolean("voice.enabled", false);
         summonSound = getConfig().getString("sound.summon", "BLOCK_NOTE_BLOCK_BELL");
 
-        if (apiKey == null || apiKey.isEmpty() || apiKey.equals("your-api-key-here")) {
-            getLogger().warning("OpenAI API key not set in config.yml! /jarvis ask may be limited.");
+        // Validate API keys
+        boolean validConfig = true;
+        if (apiKey == null || apiKey.isEmpty() || apiKey.equals("your-openai-api-key-here")) {
+            getLogger().severe("OpenAI API key is not configured in config.yml! Please set a valid key in plugins/Jarvis/config.yml.");
+            validConfig = false;
         }
+        if (voiceEnabled && (elevenLabsApiKey == null || elevenLabsApiKey.isEmpty() || elevenLabsApiKey.equals("your-elevenlabs-api-key-here"))) {
+            getLogger().severe("ElevenLabs API key is not configured in config.yml! Voice features require a valid key in plugins/Jarvis/config.yml.");
+            validConfig = false;
+        }
+        if (!validConfig) {
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
+
+        maxLinesPerPage = getConfig().getInt("chat.max-lines-per-page", 5);
+        maxCharactersPerLine = getConfig().getInt("chat.max-characters-per-line", 40);
 
         if (!getServer().getPluginManager().isPluginEnabled("Citizens")) {
             getLogger().severe("Citizens not found! No butler without a body, I’m afraid.");
@@ -86,24 +123,13 @@ public class Jarvis extends JavaPlugin implements Listener {
             return;
         }
 
-        if (voiceEnabled && (elevenLabsApiKey.isEmpty() || elevenLabsApiKey.equals("your-elevenlabs-api-key"))) {
-            getLogger().warning("ElevenLabs API key not set. Voice features disabled.");
-            voiceEnabled = false;
-        }
-
         voiceHandler = new VoiceHandler(this);
-        if (voiceEnabled) {
-            getServer().getScheduler().runTaskLater(this, () -> {
-                if (getServer().getPluginManager().isPluginEnabled("voicechat")) {
-                    voiceHandler.initialize();
-                    getLogger().info("Voice features enabled with Simple Voice Chat!");
-                } else {
-                    getLogger().warning("Simple Voice Chat plugin not found (checked for 'voicechat'). Voice features disabled.");
-                    voiceEnabled = false;
-                }
-            }, 20L);
-        } else {
-            getLogger().warning("Voice functionality disabled in config (voice.enabled=false).");
+        if (voiceEnabled && getServer().getPluginManager().isPluginEnabled("SimpleVoiceChat")) {
+            voiceHandler.initialize();
+            getLogger().info("Voice features enabled with Simple Voice Chat!");
+        } else if (voiceEnabled) {
+            getLogger().warning("Simple Voice Chat not found. Voice features disabled.");
+            voiceEnabled = false;
         }
 
         getServer().getPluginManager().registerEvents(this, this);
@@ -115,7 +141,7 @@ public class Jarvis extends JavaPlugin implements Listener {
         if (voiceHandler != null) {
             voiceHandler.shutdown();
         }
-        taskIds.forEach((uuid, taskId) -> getServer().getScheduler().cancelTask(taskId));
+        taskIds.forEach((username, taskId) -> getServer().getScheduler().cancelTask(taskId));
         taskIds.clear();
         playerJarvis.values().forEach(NPC::destroy);
         playerJarvis.clear();
@@ -135,6 +161,7 @@ public class Jarvis extends JavaPlugin implements Listener {
             sender.sendMessage(Component.text("Only players can summon Jarvis, you mechanical brute!", NamedTextColor.RED));
             return true;
         }
+        String playerId = player.getName();
 
         if (!player.hasPermission("jarvis.use")) {
             player.sendMessage(Component.text("You lack the proper breeding to command Jarvis, sir!", NamedTextColor.RED));
@@ -154,13 +181,45 @@ public class Jarvis extends JavaPlugin implements Listener {
             player.sendMessage(Component.text("- /jarvis mine [on|off] - Have Jarvis scout for ores", NamedTextColor.GRAY));
             player.sendMessage(Component.text("- /jarvis bell - Receive a Jarvis summoning bell", NamedTextColor.GRAY));
             player.sendMessage(Component.text("- /jarvis give - Receive items collected by Jarvis", NamedTextColor.GRAY));
-            player.sendMessage(Component.text("- /jarvis inventory - View Jarvis’s collected items", NamedTextColor.GRAY));
             player.sendMessage(Component.text("- /jarvis ask <question> - Consult Jarvis’s vast intellect", NamedTextColor.GRAY));
+            player.sendMessage(Component.text("- /jarvis lookup <username> - Find a player's UUID", NamedTextColor.GRAY));
+            return true;
+        }
+
+        if (args[0].equalsIgnoreCase("lookup")) {
+            if (args.length != 2) {
+                player.sendMessage(Component.text("Usage: /jarvis lookup <username>", NamedTextColor.RED));
+                return true;
+            }
+            String searchUsername = args[1];
+            String searchLowercase = searchUsername.toLowerCase();
+            UUID uuid = usernameToUUID.get(searchLowercase);
+            if (uuid == null) {
+                // Try offline player lookup as fallback
+                OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(searchUsername);
+                if (offlinePlayer.hasPlayedBefore()) {
+                    uuid = offlinePlayer.getUniqueId();
+                    String exactUsername = offlinePlayer.getName();
+                    if (exactUsername != null) {
+                        usernameToUUID.put(searchLowercase, uuid);
+                        lowercaseToExactUsername.put(searchLowercase, exactUsername);
+                        playerDataConfig.set("players." + exactUsername + ".uuid", uuid.toString());
+                        playerDataConfig.set("players." + exactUsername + ".name", exactUsername);
+                        savePlayerDataConfig();
+                    }
+                }
+            }
+            if (uuid != null) {
+                String exactUsername = lowercaseToExactUsername.getOrDefault(searchLowercase, searchUsername);
+                player.sendMessage(Component.text("UUID for " + exactUsername + ": " + uuid.toString(), NamedTextColor.AQUA));
+            } else {
+                player.sendMessage(Component.text("No UUID found for username: " + searchUsername, NamedTextColor.RED));
+            }
             return true;
         }
 
         if (args[0].equalsIgnoreCase("spawn") || input.contains("summon") || input.contains("call")) {
-            if (playerJarvis.containsKey(player.getUniqueId())) {
+            if (playerJarvis.containsKey(playerId)) {
                 player.sendMessage(Component.text("Jarvis is already here, you absent-minded fool!", NamedTextColor.YELLOW));
                 return true;
             }
@@ -170,14 +229,14 @@ public class Jarvis extends JavaPlugin implements Listener {
                 npc.spawn(player.getLocation());
                 npc.getEntity().setCustomName("§3Jarvis");
                 npc.getEntity().setCustomNameVisible(true);
-                npc.getNavigator().getDefaultParameters().distanceMargin(3.0f).range(50.0f).speed(1.5f);
-                playerJarvis.put(player.getUniqueId(), npc);
-                inventories.put(player.getUniqueId(), new ArrayList<>());
+                npc.getNavigator().getDefaultParameters().distanceMargin(3.0f);
+                playerJarvis.put(playerId, npc);
+                inventories.put(playerId, new ArrayList<>());
 
                 player.playSound(player.getLocation(), Sound.valueOf(summonSound), 1.0f, 2.0f);
-                getServer().getScheduler().runTaskLater(this, () ->
+                getServer().getScheduler().runTaskLater(this, () -> 
                     player.playSound(player.getLocation(), Sound.valueOf(summonSound), 1.0f, 2.0f), 5L);
-                getServer().getScheduler().runTaskLater(this, () ->
+                getServer().getScheduler().runTaskLater(this, () -> 
                     player.playSound(player.getLocation(), Sound.valueOf(summonSound), 1.0f, 2.0f), 10L);
                 sendWittyMessage(player, "Jarvis, say something witty and British to greet the player.");
             } catch (Exception e) {
@@ -188,18 +247,18 @@ public class Jarvis extends JavaPlugin implements Listener {
         }
 
         if (args[0].equalsIgnoreCase("dismiss") || input.contains("go away") || input.contains("leave")) {
-            NPC npc = playerJarvis.get(player.getUniqueId());
+            NPC npc = playerJarvis.get(playerId);
             if (npc == null) {
                 player.sendMessage(Component.text("No Jarvis to dismiss, you daft pillock!", NamedTextColor.YELLOW));
                 return true;
             }
 
             try {
-                stopTasks(player.getUniqueId());
+                stopTasks(playerId);
                 npc.despawn();
                 CitizensAPI.getNPCRegistry().deregister(npc);
-                playerJarvis.remove(player.getUniqueId());
-                inventories.remove(player.getUniqueId());
+                playerJarvis.remove(playerId);
+                inventories.remove(playerId);
                 sendWittyMessage(player, "Jarvis, say something sarcastic about being dismissed.");
             } catch (Exception e) {
                 getLogger().log(Level.SEVERE, "Failed to dismiss Jarvis NPC", e);
@@ -213,7 +272,7 @@ public class Jarvis extends JavaPlugin implements Listener {
                 player.sendMessage(Component.text("You’re not fit to have Jarvis follow you, sir!", NamedTextColor.RED));
                 return true;
             }
-            NPC npc = playerJarvis.get(player.getUniqueId());
+            NPC npc = playerJarvis.get(playerId);
             if (npc == null) {
                 player.sendMessage(Component.text("Summon Jarvis first with /jarvis spawn, you twit!", NamedTextColor.YELLOW));
                 return true;
@@ -221,7 +280,7 @@ public class Jarvis extends JavaPlugin implements Listener {
 
             try {
                 npc.getNavigator().setTarget(player, false);
-                npc.getNavigator().getDefaultParameters().distanceMargin(3.0f).range(50.0f).speed(1.5f);
+                npc.getNavigator().getDefaultParameters().distanceMargin(3.0f);
                 sendWittyMessage(player, "Jarvis, say something cheeky about following the player.");
             } catch (Exception e) {
                 getLogger().log(Level.SEVERE, "Failed to make Jarvis follow", e);
@@ -235,7 +294,7 @@ public class Jarvis extends JavaPlugin implements Listener {
                 player.sendMessage(Component.text("You can’t order Jarvis to stay, you plonker!", NamedTextColor.RED));
                 return true;
             }
-            NPC npc = playerJarvis.get(player.getUniqueId());
+            NPC npc = playerJarvis.get(playerId);
             if (npc == null) {
                 player.sendMessage(Component.text("Summon Jarvis first with /jarvis spawn, you plonker!", NamedTextColor.YELLOW));
                 return true;
@@ -261,7 +320,7 @@ public class Jarvis extends JavaPlugin implements Listener {
                 return true;
             }
 
-            NPC npc = playerJarvis.get(player.getUniqueId());
+            NPC npc = playerJarvis.get(playerId);
             if (npc == null) {
                 player.sendMessage(Component.text("Summon Jarvis first with /jarvis spawn, you numpty!", NamedTextColor.YELLOW));
                 return true;
@@ -273,7 +332,6 @@ public class Jarvis extends JavaPlugin implements Listener {
                 double z = Double.parseDouble(args[3]);
                 Location target = new Location(player.getWorld(), x, y, z);
                 npc.getNavigator().setTarget(target);
-                npc.getNavigator().getDefaultParameters().range(50.0f).speed(1.5f);
                 sendWittyMessage(player, "Jarvis, say something posh about heading to coordinates " + x + ", " + y + ", " + z + ".");
             } catch (NumberFormatException e) {
                 player.sendMessage(Component.text("Coordinates must be numbers, you silly goose!", NamedTextColor.RED));
@@ -289,7 +347,7 @@ public class Jarvis extends JavaPlugin implements Listener {
                 player.sendMessage(Component.text("You’re not worthy to command Jarvis’s valor, sir!", NamedTextColor.RED));
                 return true;
             }
-            NPC npc = playerJarvis.get(player.getUniqueId());
+            NPC npc = playerJarvis.get(playerId);
             if (npc == null) {
                 player.sendMessage(Component.text("Summon Jarvis first with /jarvis spawn, you twit!", NamedTextColor.YELLOW));
                 return true;
@@ -298,8 +356,8 @@ public class Jarvis extends JavaPlugin implements Listener {
             boolean enable = args.length < 2 || !args[1].equalsIgnoreCase("off");
             try {
                 if (enable) {
-                    if (!defending.getOrDefault(player.getUniqueId(), false)) {
-                        defending.put(player.getUniqueId(), true);
+                    if (!defending.getOrDefault(playerId, false)) {
+                        defending.put(playerId, true);
                         equipTool(npc, "defend", "melee");
                         startDefenseTask(player, npc);
                         sendWittyMessage(player, "Jarvis, say something valiant about defending against mobs.");
@@ -307,8 +365,8 @@ public class Jarvis extends JavaPlugin implements Listener {
                         player.sendMessage(Component.text("Jarvis is already defending, you impatient berk!", NamedTextColor.YELLOW));
                     }
                 } else {
-                    stopTasks(player.getUniqueId());
-                    defending.remove(player.getUniqueId());
+                    stopTasks(playerId);
+                    defending.remove(playerId);
                     ((LivingEntity) npc.getEntity()).getEquipment().clear();
                     sendWittyMessage(player, "Jarvis, remark on ceasing his valiant defense.");
                 }
@@ -324,7 +382,7 @@ public class Jarvis extends JavaPlugin implements Listener {
                 player.sendMessage(Component.text("You’re not fit to order Jarvis to toil, sir!", NamedTextColor.RED));
                 return true;
             }
-            NPC npc = playerJarvis.get(player.getUniqueId());
+            NPC npc = playerJarvis.get(playerId);
             if (npc == null) {
                 player.sendMessage(Component.text("Summon Jarvis first with /jarvis spawn, you plonker!", NamedTextColor.YELLOW));
                 return true;
@@ -333,8 +391,8 @@ public class Jarvis extends JavaPlugin implements Listener {
             boolean enable = args.length < 2 || !args[1].equalsIgnoreCase("off");
             try {
                 if (enable) {
-                    if (!mining.getOrDefault(player.getUniqueId(), false)) {
-                        mining.put(player.getUniqueId(), true);
+                    if (!mining.getOrDefault(playerId, false)) {
+                        mining.put(playerId, true);
                         equipTool(npc, "mine", "pickaxe");
                         startMiningTask(player, npc);
                         sendWittyMessage(player, "Jarvis, grumble about the indignity of manual labor.");
@@ -342,8 +400,8 @@ public class Jarvis extends JavaPlugin implements Listener {
                         player.sendMessage(Component.text("Jarvis is already mining, you daft sod!", NamedTextColor.YELLOW));
                     }
                 } else {
-                    stopTasks(player.getUniqueId());
-                    mining.remove(player.getUniqueId());
+                    stopTasks(playerId);
+                    mining.remove(playerId);
                     ((LivingEntity) npc.getEntity()).getEquipment().clear();
                     sendWittyMessage(player, "Jarvis, remark on escaping the drudgery of mining.");
                 }
@@ -373,37 +431,27 @@ public class Jarvis extends JavaPlugin implements Listener {
                 player.sendMessage(Component.text("You’re not posh enough to receive Jarvis’s spoils, sir!", NamedTextColor.RED));
                 return true;
             }
-            NPC npc = playerJarvis.get(player.getUniqueId());
+            NPC npc = playerJarvis.get(playerId);
             if (npc == null) {
                 player.sendMessage(Component.text("Summon Jarvis first with /jarvis spawn, you twit!", NamedTextColor.YELLOW));
                 return true;
             }
+
             try {
-                npc.getNavigator().setTarget(player, false);
-                npc.getNavigator().getDefaultParameters().distanceMargin(1.0f).range(50.0f).speed(1.5f);
-                getServer().getScheduler().runTaskLater(this, () -> {
-                    List<ItemStack> items = inventories.getOrDefault(player.getUniqueId(), new ArrayList<>());
-                    if (items.isEmpty()) {
-                        sendWittyMessage(player, "Jarvis, remark on having no spoils to share.");
-                    } else {
-                        for (ItemStack item : items) {
-                            if (item != null) {
-                                player.getWorld().dropItem(player.getLocation(), item.clone());
-                            }
-                        }
-                        inventories.put(player.getUniqueId(), new ArrayList<>());
-                        sendWittyMessage(player, "Jarvis, say something posh about presenting his collected spoils.");
+                List<ItemStack> items = inventories.getOrDefault(playerId, new ArrayList<>());
+                if (items.isEmpty()) {
+                    sendWittyMessage(player, "Jarvis, remark on having no spoils to share.");
+                } else {
+                    for (ItemStack item : items) {
+                        player.getWorld().dropItem(player.getLocation(), item);
                     }
-                }, 40L);
+                    inventories.put(playerId, new ArrayList<>());
+                    sendWittyMessage(player, "Jarvis, say something posh about presenting his collected spoils.");
+                }
             } catch (Exception e) {
                 getLogger().log(Level.SEVERE, "Failed to give items", e);
                 player.sendMessage(Component.text("Jarvis’s pockets are tangled, sir!", NamedTextColor.RED));
             }
-            return true;
-        }
-
-        if (args[0].equalsIgnoreCase("inventory")) {
-            openJarvisInventory(player);
             return true;
         }
 
@@ -421,8 +469,8 @@ public class Jarvis extends JavaPlugin implements Listener {
             try {
                 String context = buildServerContext(player);
                 String response = queryOpenAI(question, context);
-                sendPagedResponse(player, response, player.getUniqueId());
-                if (voiceEnabled && getConfig().getBoolean("voice.banter-enabled", true)) {
+                sendPagedResponse(player, response, playerId);
+                if (voiceEnabled) {
                     voiceHandler.sendVoiceResponse(player, response);
                 }
             } catch (Exception e) {
@@ -437,14 +485,38 @@ public class Jarvis extends JavaPlugin implements Listener {
     }
 
     @EventHandler
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        Player player = event.getPlayer();
+        String username = player.getName();
+        String lowercaseUsername = username.toLowerCase();
+        UUID uuid = player.getUniqueId();
+
+        // Update username-to-UUID mapping
+        if (!usernameToUUID.containsKey(lowercaseUsername) || !usernameToUUID.get(lowercaseUsername).equals(uuid)) {
+            usernameToUUID.put(lowercaseUsername, uuid);
+            lowercaseToExactUsername.put(lowercaseUsername, username);
+            playerDataConfig.set("players." + username + ".uuid", uuid.toString());
+            playerDataConfig.set("players." + username + ".name", username);
+            savePlayerDataConfig();
+            getLogger().info("Updated player data for: " + username + " (lowercase: " + lowercaseUsername + ") with UUID: " + uuid);
+        }
+    }
+
+    @EventHandler
     public void onPlayerInteractEntity(PlayerInteractEntityEvent event) {
         Player player = event.getPlayer();
+        String playerId = player.getName();
         if (event.getRightClicked() instanceof org.bukkit.entity.Player npcEntity &&
                 npcEntity.getCustomName() != null && npcEntity.getCustomName().contains("Jarvis")) {
-            NPC npc = playerJarvis.get(player.getUniqueId());
+            NPC npc = playerJarvis.get(playerId);
             if (npc != null && npc.getEntity() == npcEntity) {
                 event.setCancelled(true);
-                openJarvisInventory(player);
+                try {
+                    sendWittyMessage(player, "Jarvis, say something posh and sarcastic about being poked by the player.");
+                } catch (Exception e) {
+                    getLogger().log(Level.SEVERE, "Failed to process NPC interaction", e);
+                    player.sendMessage(Component.text("Jarvis is tongue-tied, sir!", NamedTextColor.RED));
+                }
             }
         }
     }
@@ -456,11 +528,12 @@ public class Jarvis extends JavaPlugin implements Listener {
             ItemMeta meta = item.getItemMeta();
             if (meta != null && meta.hasDisplayName() && meta.displayName().toString().contains("Jarvis Bell")) {
                 Player player = event.getPlayer();
+                String playerId = player.getName();
                 if (!player.hasPermission("jarvis.bell")) {
                     player.sendMessage(Component.text("You’re not posh enough to ring Jarvis’s bell, sir!", NamedTextColor.RED));
                     return;
                 }
-                if (playerJarvis.containsKey(player.getUniqueId())) {
+                if (playerJarvis.containsKey(playerId)) {
                     player.sendMessage(Component.text("Jarvis is already here, you absent-minded fool!", NamedTextColor.YELLOW));
                     return;
                 }
@@ -469,14 +542,14 @@ public class Jarvis extends JavaPlugin implements Listener {
                     npc.spawn(player.getLocation());
                     npc.getEntity().setCustomName("§3Jarvis");
                     npc.getEntity().setCustomNameVisible(true);
-                    npc.getNavigator().getDefaultParameters().distanceMargin(3.0f).range(50.0f).speed(1.5f);
-                    playerJarvis.put(player.getUniqueId(), npc);
-                    inventories.put(player.getUniqueId(), new ArrayList<>());
+                    npc.getNavigator().getDefaultParameters().distanceMargin(3.0f);
+                    playerJarvis.put(playerId, npc);
+                    inventories.put(playerId, new ArrayList<>());
 
                     player.playSound(player.getLocation(), Sound.valueOf(summonSound), 1.0f, 2.0f);
-                    getServer().getScheduler().runTaskLater(this, () ->
+                    getServer().getScheduler().runTaskLater(this, () -> 
                         player.playSound(player.getLocation(), Sound.valueOf(summonSound), 1.0f, 2.0f), 5L);
-                    getServer().getScheduler().runTaskLater(this, () ->
+                    getServer().getScheduler().runTaskLater(this, () -> 
                         player.playSound(player.getLocation(), Sound.valueOf(summonSound), 1.0f, 2.0f), 10L);
                     sendWittyMessage(player, "Jarvis, say something witty and British to greet the player.");
                 } catch (Exception e) {
@@ -485,40 +558,6 @@ public class Jarvis extends JavaPlugin implements Listener {
                 }
             }
         }
-    }
-
-    @EventHandler
-    public void onInventoryClose(InventoryCloseEvent event) {
-        if (!(event.getPlayer() instanceof Player player)) return;
-        if (!event.getView().title().equals(Component.text("Jarvis's Inventory", NamedTextColor.AQUA))) return;
-        List<ItemStack> remainingItems = new ArrayList<>();
-        for (ItemStack item : event.getInventory().getContents()) {
-            if (item != null && item.getType() != Material.AIR) {
-                remainingItems.add(item.clone());
-            }
-        }
-        inventories.put(player.getUniqueId(), remainingItems);
-        getLogger().info("Updated inventory for player " + player.getName() + ": " + remainingItems.size() + " items");
-    }
-
-    private void openJarvisInventory(Player player) {
-        if (!player.hasPermission("jarvis.use")) {
-            player.sendMessage(Component.text("You’re not posh enough to rummage through Jarvis’s pockets, sir!", NamedTextColor.RED));
-            return;
-        }
-        NPC npc = playerJarvis.get(player.getUniqueId());
-        if (npc == null) {
-            player.sendMessage(Component.text("Summon Jarvis first with /jarvis spawn, you twit!", NamedTextColor.YELLOW));
-            return;
-        }
-        List<ItemStack> items = inventories.getOrDefault(player.getUniqueId(), new ArrayList<>());
-        Inventory inv = getServer().createInventory(null, 27, Component.text("Jarvis's Inventory", NamedTextColor.AQUA));
-        for (ItemStack item : items) {
-            if (item != null) inv.addItem(item.clone());
-        }
-        player.openInventory(inv);
-        sendWittyMessage(player, "Jarvis, remark on the player inspecting his fine collection of spoils.");
-        getLogger().info("Opened inventory for player " + player.getName() + ": " + items.size() + " items");
     }
 
     private void equipTool(NPC npc, String task, String toolType) {
@@ -538,103 +577,95 @@ public class Jarvis extends JavaPlugin implements Listener {
     }
 
     private void startDefenseTask(Player player, NPC npc) {
-        List<String> hostileMobs = getConfig().getStringList("hostile-mobs");
+        String playerId = player.getName();
         int taskId = getServer().getScheduler().scheduleSyncRepeatingTask(this, () -> {
             if (!player.isOnline() || !npc.isSpawned()) {
-                stopTasks(player.getUniqueId());
-                defending.remove(player.getUniqueId());
+                stopTasks(playerId);
+                defending.remove(playerId);
                 ((LivingEntity) npc.getEntity()).getEquipment().clear();
                 return;
             }
             List<Entity> nearbyMobs = npc.getEntity().getNearbyEntities(16, 16, 16).stream()
-                    .filter(e -> e instanceof Mob && hostileMobs.contains(e.getType().name()))
-                    .sorted((e1, e2) -> Double.compare(
-                            e1.getLocation().distanceSquared(npc.getEntity().getLocation()),
-                            e2.getLocation().distanceSquared(npc.getEntity().getLocation())))
+                    .filter(e -> e instanceof Mob && !(e instanceof org.bukkit.entity.Player))
                     .toList();
             if (!nearbyMobs.isEmpty()) {
                 Mob target = (Mob) nearbyMobs.get(0);
                 double distance = npc.getEntity().getLocation().distance(target.getLocation());
                 boolean isRanged = target instanceof org.bukkit.entity.Ghast || target instanceof org.bukkit.entity.Phantom;
-                npc.getNavigator().getDefaultParameters().range(50.0f).speed(1.5f);
                 if (isRanged && distance > 5) {
                     equipTool(npc, "defend", "ranged");
-                    npc.getNavigator().getDefaultParameters().distanceMargin(5.0f);
                 } else {
                     equipTool(npc, "defend", "melee");
-                    npc.getNavigator().getDefaultParameters().distanceMargin(0.5f);
                 }
                 npc.getNavigator().setTarget(target, true);
                 getServer().getScheduler().runTaskLater(this, () -> {
                     if (!target.isValid()) {
-                        target.getWorld().getNearbyEntities(target.getLocation(), 2, 2, 2).stream()
+                        target.getWorld().getNearbyEntities(target.getLocation(), 1, 1, 1).stream()
                                 .filter(e -> e instanceof org.bukkit.entity.Item)
-                                .map(e -> ((org.bukkit.entity.Item) e).getItemStack().clone())
-                                .forEach(item -> inventories.computeIfAbsent(player.getUniqueId(), k -> new ArrayList<>()).add(item));
+                                .map(e -> ((org.bukkit.entity.Item) e).getItemStack())
+                                .forEach(item -> inventories.computeIfAbsent(playerId, k -> new ArrayList<>()).add(item));
                     }
                 }, 20L);
-            } else {
-                npc.getNavigator().setTarget(player, false);
-                npc.getNavigator().getDefaultParameters().distanceMargin(3.0f).range(50.0f).speed(1.5f);
             }
-        }, 0L, 10L);
-        taskIds.put(player.getUniqueId(), taskId);
+        }, 0L, 20L);
+        taskIds.put(playerId, taskId);
     }
 
     private void startMiningTask(Player player, NPC npc) {
-        List<Material> preferredOres = getConfig().getStringList("mining.preferred-ores").stream()
-                .map(s -> Material.valueOf(s.split(":")[0]))
-                .collect(Collectors.toList());
-        int radius = getConfig().getInt("mining.radius", 16);
+        String playerId = player.getName();
         int taskId = getServer().getScheduler().scheduleSyncRepeatingTask(this, () -> {
             if (!player.isOnline() || !npc.isSpawned()) {
-                stopTasks(player.getUniqueId());
-                mining.remove(player.getUniqueId());
+                stopTasks(playerId);
+                mining.remove(playerId);
                 ((LivingEntity) npc.getEntity()).getEquipment().clear();
                 return;
             }
             Location npcLoc = npc.getEntity().getLocation();
+            List<Material> preferredOres = getConfig().getStringList("mining.preferred-ores").stream()
+                    .map(Material::valueOf)
+                    .collect(Collectors.toList());
             Block targetBlock = null;
-            double closestDistance = Double.MAX_VALUE;
-            for (int x = -radius; x <= radius; x++) {
-                for (int y = -radius; y <= radius; y++) {
-                    for (int z = -radius; z <= radius; z++) {
+            for (int x = -3; x <= 3 && targetBlock == null; x++) {
+                for (int y = -3; y <= 3 && targetBlock == null; y++) {
+                    for (int z = -3; z <= 3 && targetBlock == null; z++) {
                         Block block = npcLoc.getBlock().getRelative(x, y, z);
                         if (preferredOres.contains(block.getType())) {
-                            double distance = block.getLocation().distanceSquared(npcLoc);
-                            if (distance < closestDistance) {
-                                closestDistance = distance;
-                                targetBlock = block;
-                            }
+                            targetBlock = block;
                         }
                     }
                 }
             }
+
             if (targetBlock != null) {
-                npc.getNavigator().getDefaultParameters().range(50.0f).speed(1.5f);
                 npc.getNavigator().setTarget(targetBlock.getLocation());
                 if (targetBlock.getType() == Material.DIRT || targetBlock.getType() == Material.SAND || targetBlock.getType() == Material.GRAVEL) {
                     equipTool(npc, "mine", "shovel");
                 } else {
                     equipTool(npc, "mine", "pickaxe");
                 }
-                if (npcLoc.distance(targetBlock.getLocation()) <= 2.5) {
-                    List<ItemStack> drops = new ArrayList<>();
-                    ItemStack tool = ((LivingEntity) npc.getEntity()).getEquipment().getItemInMainHand();
-                    targetBlock.getDrops(tool).forEach(item -> drops.add(item.clone()));
-                    targetBlock.setType(Material.AIR);
-                    inventories.computeIfAbsent(player.getUniqueId(), k -> new ArrayList<>()).addAll(drops);
-                    getLogger().info("Jarvis mined " + drops.size() + " items at " + targetBlock.getLocation());
-                }
+                List<ItemStack> drops = targetBlock.getDrops();
+                targetBlock.breakNaturally();
+                inventories.computeIfAbsent(playerId, k -> new ArrayList<>()).addAll(drops);
             } else {
-                npc.getNavigator().setTarget(player, false);
-                npc.getNavigator().getDefaultParameters().distanceMargin(3.0f).range(50.0f).speed(1.5f);
+                if (npcLoc.getY() > -59) {
+                    Location target = npcLoc.clone().add(0, -1, 0);
+                    npc.getNavigator().setTarget(target);
+                    equipTool(npc, "mine", "pickaxe");
+                    Block block = target.getBlock();
+                    if (block.getType().isSolid() && !block.getType().isAir()) {
+                        List<ItemStack> drops = block.getDrops();
+                        block.breakNaturally();
+                        inventories.computeIfAbsent(playerId, k -> new ArrayList<>()).addAll(drops);
+                    }
+                } else {
+                    npc.getNavigator().setTarget(player, false);
+                }
             }
-        }, 0L, 10L);
-        taskIds.put(player.getUniqueId(), taskId);
+        }, 0L, 20L);
+        taskIds.put(playerId, taskId);
     }
 
-    private void stopTasks(UUID playerId) {
+    private void stopTasks(String playerId) {
         Integer taskId = taskIds.remove(playerId);
         if (taskId != null) {
             getServer().getScheduler().cancelTask(taskId);
@@ -648,13 +679,12 @@ public class Jarvis extends JavaPlugin implements Listener {
             response = queryOpenAI(prompt, context);
         } catch (Exception e) {
             response = getFallbackMessage(prompt);
-            getLogger().log(Level.WARNING, "Failed to query OpenAI: " + e.getMessage(), e);
         }
         if (random.nextInt(3) == 0) {
             response = (random.nextBoolean() ? "Oh, I suppose... " : "Very well, sir. ") + response;
         }
         player.sendMessage(Component.text("[Jarvis] " + response, NamedTextColor.AQUA));
-        if (voiceEnabled && getConfig().getBoolean("voice.banter-enabled", true)) {
+        if (voiceEnabled) {
             try {
                 voiceHandler.sendVoiceResponse(player, response);
             } catch (Exception e) {
@@ -695,13 +725,13 @@ public class Jarvis extends JavaPlugin implements Listener {
                 return "Alas, sir, my pockets are as empty as a pauper’s pantry!";
             }
             return "Behold, sir! The spoils of my labors, presented with utmost decorum!";
-        } else if (prompt.contains("poked") || prompt.contains("inspecting")) {
-            return "Rummaging through my pockets, are we? Mind the lint, sir!";
+        } else if (prompt.contains("poked")) {
+            return "Poking me? Have you no manners, you uncouth lout?";
         }
         return "Well, that’s a right mess. Shall we try again, sir?";
     }
 
-    protected String buildServerContext(Player player) {
+    private String buildServerContext(Player player) {
         StringBuilder context = new StringBuilder();
         context.append("You are Jarvis, a witty British butler AI in a Minecraft server (Purpur 1.21.4). ");
         context.append("Speak in a sarcastic, posh tone with phrases like 'Oh, I suppose...' or 'Very well, sir.'\n");
@@ -722,7 +752,7 @@ public class Jarvis extends JavaPlugin implements Listener {
         return context.toString();
     }
 
-    protected String queryOpenAI(String question, String context) throws Exception {
+    private String queryOpenAI(String question, String context) throws Exception {
         if (apiKey == null || apiKey.isEmpty() || apiKey.equals("your-api-key-here")) {
             return "Oh, I suppose my AI faculties are offline. Configure the API key, you daft sod!";
         }
@@ -772,7 +802,7 @@ public class Jarvis extends JavaPlugin implements Listener {
         }
     }
 
-    private void sendPagedResponse(Player player, String response, UUID playerId) {
+    private void sendPagedResponse(Player player, String response, String playerId) {
         List<String> lines = new ArrayList<>();
         String[] words = response.split("\\s+");
         StringBuilder currentLine = new StringBuilder();
@@ -791,7 +821,7 @@ public class Jarvis extends JavaPlugin implements Listener {
         sendPage(player, playerId, 0);
     }
 
-    private void sendPage(Player player, UUID playerId, int page) {
+    private void sendPage(Player player, String playerId, int page) {
         List<String> lines = chatPages.getOrDefault(playerId, new ArrayList<>());
         if (lines.isEmpty()) {
             player.sendMessage(Component.text("No content available, sir.", NamedTextColor.RED));
@@ -830,15 +860,29 @@ public class Jarvis extends JavaPlugin implements Listener {
     @EventHandler
     public void onPlayerCommand(PlayerCommandPreprocessEvent event) {
         Player player = event.getPlayer();
+        String playerId = player.getName();
         String message = event.getMessage().toLowerCase();
         if (message.startsWith("/jarvis page ")) {
             event.setCancelled(true);
             try {
                 int page = Integer.parseInt(message.split(" ")[2]);
-                sendPage(player, player.getUniqueId(), page);
+                sendPage(player, playerId, page);
             } catch (NumberFormatException e) {
                 player.sendMessage(Component.text("Invalid page number, you silly goose!", NamedTextColor.RED));
             }
         }
+    }
+
+    private void savePlayerDataConfig() {
+        try {
+            playerDataConfig.save(playerDataFile);
+            getLogger().info("Saved player data config to: " + playerDataFile.getAbsolutePath());
+        } catch (Exception e) {
+            getLogger().warning("Failed to save player data: " + e.getMessage());
+        }
+    }
+
+    private UUID getUUIDFromUsername(String username) {
+        return usernameToUUID.getOrDefault(username.toLowerCase(), null);
     }
 }
