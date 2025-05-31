@@ -1,5 +1,5 @@
 name: Jarvis
-version: 1.2-SNAPSHOT
+version: 1.5
 main: com.yourname.jarvis.Jarvis
 api-version: 1.21
 depend: [Citizens]
@@ -7,7 +7,7 @@ softdepend: [PlasmoVoice]
 commands:
   jarvis:
     description: Interact with Jarvis, your AI companion
-    usage: /<command> [help|spawn|dismiss|follow|stay|go|defend|mine|bell|give|inventory|ask]
+    usage: /<command> [help|spawn|dismiss|follow|stay|go|defend|mine|bell|give|inventory|ask|reload|health|voiceusers]
 permissions:
   jarvis.use:
     description: Allows basic interaction with Jarvis
@@ -27,6 +27,6 @@ permissions:
   jarvis.give:
     description: Allows receiving items from Jarvis
     default: true
-  jarvis.lookup:
-    description: Allows looking up a player's UUID by username
-    default: true
+  jarvis.admin:
+    description: Allows console access to reload, health, and voiceusers commands
+    default: op

@@ -6,7 +6,7 @@
 
     <groupId>com.yourname</groupId>
     <artifactId>jarvis</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <version>1.5</version>
     <packaging>jar</packaging>
 
     <name>Jarvis</name>
@@ -14,14 +14,22 @@
     <repositories>
         <repository>
             <id>purpur</id>
+            <name>Purpur</name>
             <url>https://repo.purpurmc.org/snapshots</url>
         </repository>
         <repository>
             <id>citizens</id>
+            <name>Citizens</name>
             <url>https://repo.citizensnpcs.co/</url>
         </repository>
         <repository>
+            <id>modrinth</id>
+            <name>Modrinth</name>
+            <url>https://api.modrinth.com/maven</url>
+        </repository>
+        <repository>
             <id>central</id>
+            <name>Maven Central</name>
             <url>https://repo.maven.apache.org/maven2</url>
         </repository>
     </repositories>
@@ -47,7 +55,7 @@
         </dependency>
         <dependency>
             <groupId>de.maxhenkel.voicechat</groupId>
-            <artifactId>voicechat-api</artifactId>
+            <artifactId>voicechat</artifactId>
             <version>2.5.26</version>
             <scope>provided</scope>
         </dependency>
@@ -55,6 +63,17 @@
             <groupId>org.json</groupId>
             <artifactId>json</artifactId>
             <version>20231013</version>
+        </dependency>
+        <dependency>
+            <groupId>org.java-websocket</groupId>
+            <artifactId>Java-WebSocket</artifactId>
+            <version>1.5.3</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>commons-io</groupId>
+            <artifactId>commons-io</artifactId>
+            <version>2.16.1</version>
         </dependency>
     </dependencies>
 
@@ -67,7 +86,6 @@
                 <configuration>
                     <source>21</source>
                     <target>21</target>
-                    <encoding>UTF-8</encoding>
                 </configuration>
             </plugin>
             <plugin>
@@ -86,6 +104,10 @@
                                 <relocation>
                                     <pattern>org.json</pattern>
                                     <shadedPattern>com.yourname.jarvis.org.json</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>org.apache.commons.io</pattern>
+                                    <shadedPattern>com.yourname.jarvis.org.apache.commons.io</shadedPattern>
                                 </relocation>
                             </relocations>
                         </configuration>
