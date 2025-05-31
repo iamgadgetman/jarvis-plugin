@@ -32,6 +32,7 @@ public class VoiceHandler {
     private WebSocketServer webSocketServer;
     private final boolean voiceEnabled;
     private final Map<WebSocket, UUID> connectionToPlayer = new HashMap<>();
+    private final Map<String, Long> processedCommands = new HashMap<>();
 
     public VoiceHandler(Jarvis plugin) {
         this.plugin = plugin;
@@ -75,6 +76,14 @@ public class VoiceHandler {
                 @Override
                 public void onMessage(WebSocket conn, String message) {
                     plugin.getLogger().info("Received WebSocket input: \"" + message + "\" from " + conn.getRemoteSocketAddress());
+                    // Prevent duplicate processing
+                    String messageHash = Integer.toHexString(message.hashCode());
+                    long now = System.currentTimeMillis();
+                    if (processedCommands.containsKey(messageHash) && (now - processedCommands.get(messageHash)) < 1000) {
+                        plugin.getLogger().info("Ignoring duplicate WebSocket message: \"" + message + "\"");
+                        return;
+                    }
+                    processedCommands.put(messageHash, now);
                     try {
                         JSONObject json = new JSONObject(message);
                         String type = json.getString("type");
@@ -193,9 +202,10 @@ public class VoiceHandler {
             plugin.getLogger().info("Using cached audio for: \"" + normalizedText + "\"");
         }
 
-        // Placeholder for Simple Voice Chat integration
+        // Placeholder for voice playback (SVC integration pending)
         player.sendMessage(Component.text("[Jarvis Voice] " + text, NamedTextColor.AQUA));
         plugin.getLogger().info("Sent text-based voice response to " + player.getName() + ": \"" + text + "\"");
+        plugin.getLogger().info("Audio file generated at: " + cacheDirectory.resolve(Integer.toHexString(normalizedText.hashCode()) + ".mp3"));
     }
 
     private byte[] convertTextToSpeech(String text) {
@@ -206,8 +216,7 @@ public class VoiceHandler {
 
         plugin.getLogger().info("Converting text to speech via ElevenLabs: \"" + text + "\"");
         try {
-            String json = String.format("{\"text\":\"%s\",\"voice_settings\":{\"stability\":0.5,\"similarity_boost\":0.5}}",
-                    text.replace("\"", "\\\""));
+            String json = "{\"text\":\"" + text.replace("\"", "\\\"") + "\",\"voice_settings\":{\"stability\":0.5,\"similarity_boost\":0.5}}";
             plugin.getLogger().info("Sending ElevenLabs request: " + json);
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create("https://api.elevenlabs.io/v1/text-to-speech/" + voiceId + "/stream"))
